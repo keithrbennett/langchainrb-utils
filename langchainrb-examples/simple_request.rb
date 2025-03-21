@@ -1,18 +1,5 @@
 #!/usr/bin/env ruby
 
-
-# require "langchain"
-# require "langchain/llm/ollama"
-# require 'faraday'
-
-# # Initialize the Ollama LLM
-# ollama = Langchain::LLM::Ollama.new
-
-# # Example usage
-# response = ollama.complete(prompt: "what is the french word for white?")
-# puts response
-# exit!
-
 require 'anthropic'
 require 'awesome_print'
 require 'langchain'
