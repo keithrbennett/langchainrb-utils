@@ -4,104 +4,70 @@
 # https://repo2txt.simplebasedomain.com/ and enables discussing that 
 # document with an LLM.
 
+require 'awesome_print'
 require 'langchain'
-require 'langchain/llm/ollama'
-require 'langchain/embeddings/ollama'
-require 'matrix'
+require 'pdf-reader'
 require 'faraday'
 require 'optparse'
 require 'json'
+require 'logger'
+require 'pry'
 
-class DocumentChunk
-  attr_reader :content, :embedding
+Langchain.logger = Logger.new('langchain.log')
 
-  def initialize(content, embedding)
-    @content = content
-    @embedding = Vector.elements(embedding)
-  end
+def parse_command_line_options
+  options = {}
+  OptionParser.new do |opts|
+    opts.banner = "Usage: document-discussion-tool.rb [options]"
 
-  def similarity_to(other_vector)
-    # Cosine similarity
-    dot_product = @embedding.inner_product(other_vector)
-    magnitude_product = @embedding.magnitude * other_vector.magnitude
-    dot_product / magnitude_product
-  end
+    opts.on("-f", "--file FILE", "File to discuss (PDF or TXT)") do |f|
+      options[:file] = f
+    end
+
+    opts.on("-q", "--question QUESTION", "Initial question to ask") do |q|
+      options[:question] = q
+    end
+  end.parse!
+  options
 end
 
 class DocumentLoader
-  def self.load(file_path, embedder)
+  def self.load(file_path)
     raise "Please specify a file" if file_path.nil?
-    
-    # Use LangChain's document loaders
-    loader = case File.extname(file_path).downcase
+    puts "Loading document: #{file_path}..."
+
+    # Use LangChain's document processors
+    processor = case File.extname(file_path).downcase
     when '.pdf'
-      Langchain::Loader::PDF.new(file_path)
+      Langchain::Processors::PDF.new
     when '.txt'
-      Langchain::Loader::Text.new(file_path)
+      Langchain::Processors::Text.new
     else
       raise "Unsupported file format. Please use PDF or TXT files."
     end
 
-    # Load and chunk the document
-    document = loader.load
-    content = document.is_a?(Array) ? document.map(&:content).join("\n") : document.content
-    chunks = chunk_text(content)
-    
-    # Create embeddings for each chunk
-    chunks.map do |chunk|
-      embedding = embedder.embed_text(chunk)
-      DocumentChunk.new(chunk, embedding)
-    end
-  end
-  
-  private
-  
-  def self.chunk_text(text, chunk_size = 1000)
-    chunks = []
-    position = 0
-    
-    while position < text.length
-      chunk_end = [position + chunk_size, text.length].min
-      
-      if chunk_end < text.length
-        last_space = text.rindex(/\s/, chunk_end)
-        if last_space && last_space > position
-          chunk_end = last_space
-        end
-      end
-      
-      chunks << text[position...chunk_end]
-      
-      position = chunk_end
-      position += 1 while position < text.length && text[position] =~ /\s/
-    end
-    
-    chunks
+    # Process the document and chunk it
+    content = File.open(file_path) { |file| processor.parse(file) }
+
+    Langchain::Chunker::Text.new(
+      content,
+      chunk_size: 1000,
+      chunk_overlap: 100,
+      separator: "\n"  # Use newlines as chunk boundaries
+    ).chunks
   end
 end
 
 class DocumentDiscussionTool
-  def initialize
-    @llm = Langchain::LLM::Ollama.new(model: 'llama2')
-    @embedder = Langchain::Embeddings::Ollama.new(model: 'llama2')
+  def initialize(options)
+    @llm = Langchain::LLM::Ollama.new
     @context = []
-    parse_options
-  end
-
-  def parse_options
-    @options = {}
-    OptionParser.new do |opts|
-      opts.banner = "Usage: document-discussion-tool.rb [options]"
-
-      opts.on("-f", "--file FILE", "File to discuss (PDF or TXT)") do |f|
-        @options[:file] = f
-      end
-    end.parse!
+    @options = options
   end
 
   def load_document
     begin
-      @context = DocumentLoader.load(@options[:file], @embedder)
+      @context = DocumentLoader.load(@options[:file])
     rescue StandardError => e
       puts "Error loading document: #{e.message}"
       exit 1
@@ -113,8 +79,14 @@ class DocumentDiscussionTool
     puts "Type 'exit' to quit or 'help' for commands."
 
     loop do
-      print "\nYour question: "
-      input = gets.chomp
+      if @options[:question]
+        input = @options[:question]
+        @options[:question] = nil  # Clear it so we only use it once
+        puts "\nYour question:\n#{input}"
+      else
+        print "\nYour question: "
+        input = gets.chomp
+      end
       
       case input.downcase
       when 'exit'
@@ -130,27 +102,27 @@ class DocumentDiscussionTool
   end
 
   def get_llm_response(question)
-    relevant_chunks = find_relevant_chunks(question)
+    context = @context.map(&:text).join("\n\n")
     prompt = <<~PROMPT
       Context from the document:
-      #{relevant_chunks.map(&:content).join("\n\n")}
+      #{context}
 
       Question: #{question}
 
       Please answer based on the context provided above.
     PROMPT
 
-    @llm.complete(prompt: prompt)
-  end
-
-  def find_relevant_chunks(question, num_chunks = 3)
-    # Get embedding for the question
-    question_embedding = Vector.elements(@embedder.embed_text(question))
-    
-    # Sort chunks by cosine similarity to question
-    @context.sort_by do |chunk|
-      -chunk.similarity_to(question_embedding)
-    end.first(num_chunks)
+    begin
+    #   x = @llm.complete(prompt: prompt).completion
+    #   x = @llm.complete(prompt: prompt)
+    #   binding.pry
+    #   x.completion
+      @llm.complete(prompt: prompt).completion
+    rescue JSON::ParserError, StandardError => e
+      puts '!!!'
+      puts "Error from LLM: #{e.message}"
+      puts '$$$'
+    end
   end
 
   def show_help
@@ -169,7 +141,8 @@ class DocumentDiscussionTool
 end
 
 if __FILE__ == $0
-  tool = DocumentDiscussionTool.new
+  options = parse_command_line_options
+  tool = DocumentDiscussionTool.new(options)
   tool.run
 end
 
