@@ -64,9 +64,9 @@ def main
   prompt = ARGV.join(' ')
 
   # Specify which LLMs to use:
-  llms = [open_ai_llm, anthopic_llm, ollama_llm, deepseek_llm]
+  # llms = [open_ai_llm, anthopic_llm, ollama_llm, deepseek_llm]
   # llms = [ollama_llm, deepseek_llm]
-  # llms = [ollama_llm]
+  llms = [ollama_llm]
 
   # This will call each model sequentially:
   # llms.each { |llm| call_llm(llm, prompt) }
