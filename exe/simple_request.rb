@@ -6,31 +6,7 @@ require 'langchain'
 require 'openai'
 require 'pry'
 require 'reline'
-
-def open_ai_llm = Langchain::LLM::OpenAI.new(api_key: ENV['OPENAI_API_KEY'])
-def anthopic_llm = Langchain::LLM::Anthropic.new(api_key: ENV['ANTHROPIC_API_KEY'])
-def ollama_llm = Langchain::LLM::Ollama.new
-
-def deepseek_llm
-  llm = Langchain::LLM::OpenAI.new(
-    api_key: ENV['DEEPSEEK_API_KEY'],
-    default_options: {
-      chat_model: "deepseek-reasoner"  # Changed to model_name parameter
-    }
-  )
-
-  # Kludge to use OpenAI class for DeepSeek API
-  llm.instance_variable_get(:@client).instance_variable_set(
-    :@uri_base, 
-    "https://api.deepseek.com/v1"
-  )
-
-  llm
-end
-
-def call_llm(llm, prompt)
-  response = llm.chat(messages: [{ role: "user", content: prompt }])
-end
+require_relative '../lib/llm_clients'
 
 def report_llm_response(llm, prompt, response)
   puts <<~HEREDOC
@@ -61,12 +37,21 @@ def report_llm_response(llm, prompt, response)
 end
 
 def main
+  if ARGV.empty?
+    puts "Usage: `#{__FILE__} <prompt>`, where all args are joined with spaces."
+    exit 1
+  end
+
   prompt = ARGV.join(' ')
 
-  # Specify which LLMs to use:
-  # llms = [open_ai_llm, anthopic_llm, ollama_llm, deepseek_llm]
-  # llms = [ollama_llm, deepseek_llm]
-  llms = [ollama_llm]
+  # Specify which LLMs to use (comment out the ones you don't want to use):
+  llms = [
+    # LlmClients.create(:anthropic)?,
+    # LlmClients.create(:deepseek),
+    LlmClients.create(:gemini),
+    LlmClients.create(:ollama),
+    LlmClients.create(:openai),
+  ]
 
   # This will call each model sequentially:
   # llms.each { |llm| call_llm(llm, prompt) }
@@ -74,7 +59,7 @@ def main
   # This will call all models in parallel:
   threads = llms.map do |llm| 
     Thread.new do
-      response = call_llm(llm, prompt)
+      response = LlmClients.call_llm(llm, prompt)
       [llm, response]
     end
   end
